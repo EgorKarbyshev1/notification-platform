@@ -1,0 +1,37 @@
+@startuml
+!include <C4/C4_Container>
+LAYOUT_WITH_LEGEND()
+title Вариант A — централизованная оркестрация
+Person(client, "Клиент", "Настройки, история, подтверждение Push")
+Person(operator, "Сотрудник", "Кампании и поддержка")
+System_Ext(bank, "Продуктовые системы банка", "Собственный outbox событий")
+System_Ext(push, "Push-провайдер", "Приём и результаты")
+System_Ext(sms, "SMS-провайдер", "Приём и отчёты")
+System_Ext(email, "Email-провайдер", "Приём и результаты")
+System_Boundary(platform, "Платформа уведомлений") {
+  Container(api, "API и генератор кампаний", "Go", "Приём, политики, настройки, история, обратные вызовы")
+  ContainerDb(db, "Состояние платформы", "PostgreSQL, 3 узла", "Уведомления, попытки, настройки, outbox, таймеры")
+  Container(pub, "Издатель outbox", "Go", "Публикация с подтверждением и повторами")
+  ContainerQueue(queue, "Очереди заданий", "RabbitMQ, 3 узла", "Отдельные quorum-очереди по типам и очередь ошибок")
+  Container(worker, "Оркестратор доставки", "Go, несколько экземпляров", "Раздельные пулы, адаптеры каналов, сканер таймеров")
+  Container(monitor, "Наблюдение", "Prometheus / Alertmanager", "Метрики и тревоги")
+}
+Rel(bank, api, "Передаёт события с ключом", "HTTPS")
+Rel(client, api, "Настройки, история, подтверждение приложения", "HTTPS")
+Rel(operator, api, "Управляет кампанией и читает историю", "HTTPS")
+Rel(api, db, "Сохраняет уведомление и outbox; читает историю", "SQL / TLS")
+Rel(pub, db, "Читает outbox, отмечает публикации", "SQL / TLS")
+Rel(pub, queue, "Публикует задания и события", "AMQP / TLS, подтверждения")
+Rel(queue, worker, "Выдаёт задания", "AMQP / TLS, ручные подтверждения")
+Rel(worker, db, "Аренды, политики, попытки, таймеры, outbox", "SQL / TLS")
+Rel(worker, push, "Отправляет Push, запрашивает статус", "HTTPS")
+Rel(worker, sms, "Отправляет SMS, запрашивает статус", "HTTPS")
+Rel(worker, email, "Отправляет Email, запрашивает статус", "HTTPS")
+Rel(push, api, "Обратные вызовы", "HTTPS")
+Rel(sms, api, "Обратные вызовы", "HTTPS")
+Rel(email, api, "Обратные вызовы", "HTTPS")
+Rel(monitor, api, "Собирает метрики", "HTTPS")
+Rel(monitor, worker, "Собирает метрики", "HTTPS")
+Rel(monitor, pub, "Собирает метрики", "HTTPS")
+Rel(monitor, queue, "Собирает метрики", "HTTPS")
+@enduml

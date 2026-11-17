@@ -1,0 +1,57 @@
+@startuml
+title Вариант A — неизвестный исход Push и резервная SMS
+autonumber
+participant "Источник банка" as Source
+participant "API" as API
+database "PostgreSQL" as DB
+participant "Издатель outbox" as Pub
+queue "RabbitMQ" as MQ
+participant "Оркестратор и сканер таймеров" as Worker
+participant "Push-провайдер" as Push
+participant "SMS-провайдер" as SMS
+Source -> API : Событие с ключом
+API -> DB : Уведомление + outbox в транзакции
+DB --> API : Фиксация
+API --> Source : Принято, ID
+Pub -> DB : Прочитать outbox
+Pub -> MQ : Задание Push
+MQ --> Pub : Подтверждение
+Pub -> DB : Отметить публикацию
+MQ -> Worker : Задание
+Worker -> DB : Аренда, политика, попытка и дедлайн
+Worker -> Push : Отправить с ключом попытки
+Push -> Push : Сообщение принято, ответ потерян
+... Таймаут вызова 2 секунды ...
+Worker -> DB : Исход неизвестен, следующее действие
+Worker -> MQ : Подтвердить сохранённое задание
+Worker -> Push : Проверить статус по ключу, если возможно
+Push --> Worker : Результат пока неизвестен
+... Дедлайн Push: 30 секунд от приёма ...
+Worker -> DB : Захватить таймер, проверить отсутствие
+Worker -> DB : подтверждения, записать outbox резерва
+Pub -> DB : Прочитать outbox резерва
+Pub -> MQ : Задание резервной SMS
+MQ --> Pub : Подтверждение
+Pub -> DB : Отметить публикацию
+MQ -> Worker : Резервная SMS
+Worker -> DB : Проверить версию, настройки, контакт,
+Worker -> DB : бюджет и TTL; сохранить попытку SMS
+Worker -> SMS : Отправить с новым ключом SMS-попытки
+SMS --> Worker : Принято провайдером
+Worker -> DB : Сохранить принятие и таймер
+Worker -> MQ : Подтвердить задание
+SMS -> API : Подтверждённая доставка SMS
+API -> DB : Результат попытки + outbox
+Pub -> DB : Прочитать результат
+Pub -> MQ : Событие доставки SMS
+MQ --> Pub : Подтверждение
+Pub -> DB : Отметить публикацию
+MQ -> Worker : Доставка SMS
+Worker -> DB : Итог доставлено, сохранить неизвестность Push
+Worker -> MQ : Подтвердить событие
+opt Позднее достоверное подтверждение Push
+  Push -> API : Поздний результат Push
+  API -> DB : Обновить историю попытки + outbox
+  API --> Push : Подтверждение принято
+end
+@enduml

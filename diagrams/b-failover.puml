@@ -1,0 +1,76 @@
+@startuml
+title Вариант B — неизвестный исход Push и резервная SMS
+autonumber
+participant "API" as API
+database "PostgreSQL" as DB
+participant "Издатель outbox" as Pub
+queue "Kafka" as Kafka
+participant "Координатор и таймеры" as Coord
+participant "Обработчик Push" as PW
+participant "Push-провайдер" as Push
+participant "Обработчик SMS" as SW
+participant "SMS-провайдер" as SMS
+API -> DB : Сохранить уведомление + outbox
+DB --> API : Фиксация, можно подтвердить приём
+Pub -> DB : Прочитать принятое уведомление
+Pub -> Kafka : Уведомление принято
+Kafka --> Pub : Подтверждение
+Pub -> DB : Отметить публикацию
+Kafka -> Coord : Уведомление принято
+Coord -> DB : Политика, план, дедлайн,
+Coord -> DB : дедупликация и outbox команды Push
+Coord -> Kafka : Зафиксировать смещение
+Pub -> DB : Получить команду Push
+Pub -> Kafka : Команда Push
+Kafka --> Pub : Подтверждение
+Pub -> DB : Отметить публикацию
+Kafka -> PW : Команда Push
+PW -> DB : Проверить план, аренду и политику,
+PW -> DB : сохранить попытку
+PW -> Push : Отправить Push с ключом
+Push -> Push : Принять, потерять ответ
+... Таймаут вызова 2 секунды ...
+opt Провайдер позволяет сверить статус по ключу
+  PW -> Push : Запросить статус, не создавать новую отправку
+  Push --> PW : Статус пока неизвестен
+end
+PW -> DB : Неизвестный исход + outbox результата
+PW -> Kafka : Зафиксировать смещение команды
+Pub -> DB : Получить результат
+Pub -> Kafka : Исход Push неизвестен
+Kafka --> Pub : Подтверждение
+Pub -> DB : Отметить публикацию
+Kafka -> Coord : Исход Push неизвестен
+Coord -> DB : Дедупликация, ожидание до дедлайна
+Coord -> Kafka : Зафиксировать смещение
+... Подтверждения нет, наступили 30 секунд от приёма ...
+Coord -> DB : Захватить таймер, проверить актуальный
+Coord -> DB : исход и политику; outbox команды SMS
+Pub -> DB : Получить команду SMS
+Pub -> Kafka : Команда SMS с новой версией плана
+Kafka --> Pub : Подтверждение
+Pub -> DB : Отметить публикацию
+Kafka -> SW : Команда SMS
+SW -> DB : Проверить версию, контакт, бюджет,
+SW -> DB : настройки и TTL; записать попытку
+SW -> SMS : Отправить с ключом SMS-попытки
+SMS --> SW : Принято
+SW -> DB : Результат принятия + outbox
+SW -> Kafka : Зафиксировать смещение команды
+Pub -> DB : Получить принятие SMS
+Pub -> Kafka : SMS принята
+Kafka --> Pub : Подтверждение
+Pub -> DB : Отметить публикацию
+Kafka -> Coord : SMS принята
+Coord -> DB : Применить результат, ждать подтверждение
+Coord -> Kafka : Зафиксировать смещение
+SMS -> API : Отчёт доставки SMS
+API -> DB : Входящее событие + outbox
+Pub -> DB : Получить отчёт
+Pub -> Kafka : SMS доставлена
+Kafka --> Pub : Подтверждение
+Pub -> DB : Отметить публикацию
+Kafka -> Coord : SMS доставлена
+Coord -> DB : Итог доставлено, сохранить историю Push
+Coord -> Kafka : Зафиксировать смещение
+@enduml

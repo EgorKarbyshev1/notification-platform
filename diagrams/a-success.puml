@@ -1,0 +1,43 @@
+@startuml
+title Вариант A — успешная доставка Push
+autonumber
+participant "Источник банка" as Source
+participant "API" as API
+database "PostgreSQL" as DB
+participant "Издатель outbox" as Pub
+queue "RabbitMQ" as MQ
+participant "Оркестратор" as Worker
+participant "Push-провайдер" as Push
+actor "Приложение клиента" as App
+Source -> API : Событие, получатель, ключ
+API -> DB : Транзакция: уведомление + outbox
+DB --> API : Надёжная фиксация
+API --> Source : Принято, ID уведомления
+Pub -> DB : Получить неопубликованное
+DB --> Pub : Задание доставки
+Pub -> MQ : Опубликовать ID и версию
+MQ --> Pub : Подтверждение публикации
+Pub -> DB : Отметить публикацию
+MQ -> Worker : Задание доставки
+Worker -> DB : Аренда, проверка политики и TTL,
+Worker -> DB : фиксация попытки Push и дедлайна
+DB --> Worker : Разрешено, ключ попытки
+Worker -> Push : Push с ID попытки и ключом
+Push --> Worker : Принято провайдером
+Worker -> DB : Принята провайдером, ждать до дедлайна
+Worker -> MQ : Подтверждение задания
+Push -> App : Уведомление
+App -> API : Подтверждение получения с ID попытки
+API -> DB : Доставка попытки + outbox результата
+DB --> API : Фиксация
+API --> App : Подтверждение принято
+Pub -> DB : Прочитать результат
+Pub -> MQ : Событие подтверждения
+MQ --> Pub : Подтверждение публикации
+Pub -> DB : Отметить публикацию результата
+MQ -> Worker : Подтверждение Push
+Worker -> DB : Проверить версию, завершить доставку,
+Worker -> DB : отменить неначатый резерв
+DB --> Worker : Доставлено
+Worker -> MQ : Подтверждение задания
+@enduml

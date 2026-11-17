@@ -1,0 +1,61 @@
+@startuml
+title Вариант B — успешная доставка Push
+autonumber
+participant "Источник банка" as Source
+participant "API" as API
+database "PostgreSQL" as DB
+participant "Издатель outbox" as Pub
+queue "Kafka" as Kafka
+participant "Координатор" as Coord
+participant "Обработчик Push" as Worker
+participant "Push-провайдер" as Push
+actor "Приложение клиента" as App
+Source -> API : Событие, получатель, ключ
+API -> DB : Транзакция: уведомление + outbox
+DB --> API : Надёжная фиксация
+API --> Source : Принято, ID
+Pub -> DB : Получить outbox
+Pub -> Kafka : Уведомление принято
+Kafka --> Pub : Подтверждение записи
+Pub -> DB : Отметить публикацию
+Kafka -> Coord : Уведомление принято
+Coord -> DB : Дедупликация события, политика,
+Coord -> DB : план, дедлайн, outbox команды Push
+DB --> Coord : Фиксация
+Coord -> Kafka : Зафиксировать смещение
+Pub -> DB : Получить команду
+Pub -> Kafka : Команда Push с версией плана
+Kafka --> Pub : Подтверждение записи
+Pub -> DB : Отметить публикацию
+Kafka -> Worker : Команда Push
+Worker -> DB : Проверить версию и политику,
+Worker -> DB : получить аренду, записать попытку
+Worker -> Push : Push с ключом попытки
+Push --> Worker : Принято провайдером, доставка не подтверждена
+Worker -> DB : Попытка принята провайдером + outbox
+DB --> Worker : Фиксация
+Worker -> Kafka : Зафиксировать смещение команды
+Pub -> DB : Получить результат
+Pub -> Kafka : Push принят провайдером
+Kafka --> Pub : Подтверждение записи
+Pub -> DB : Отметить публикацию
+Kafka -> Coord : Push принят провайдером
+Coord -> DB : Применить принятие, статус ожидает подтверждения
+DB --> Coord : Фиксация ожидания подтверждения
+Coord -> Kafka : Зафиксировать смещение результата
+Push -> App : Уведомление
+App -> API : Подтверждение получения с ID уведомления и попытки
+API -> API : Проверить подлинность, получателя и ID попытки
+API -> DB : Транзакция: проверенное подтверждение + outbox
+DB --> API : Фиксация
+API --> App : Подтверждение принято
+Pub -> DB : Получить подтверждение
+Pub -> Kafka : Приложение подтвердило получение, ID попытки
+Kafka --> Pub : Подтверждение записи
+Pub -> DB : Отметить публикацию
+Kafka -> Coord : Проверенное подтверждение приложения, ID попытки
+Coord -> DB : Транзакция: дедупликация, проверка попытки,
+Coord -> DB : статус доставлено, отмена неначатого резерва
+DB --> Coord : Фиксация доставки
+Coord -> Kafka : Зафиксировать смещение
+@enduml
